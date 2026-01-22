@@ -4,8 +4,6 @@ import random
 import os
 import time
 import json
-import gzip
-import io
 from dotenv import load_dotenv
 
 def translate_message(raw_message):
@@ -33,29 +31,8 @@ def generate_headers(cookie):
         "Origin": "https://glados.cloud",
         "Referer": "https://glados.cloud/console/checkin",
         "User-Agent": random.choice(user_agents),
-        "Connection": "keep-alive",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache"
+        "Connection": "keep-alive"
     }
-
-def decode_response_content(response):
-    """尝试解码响应内容，处理可能的gzip压缩"""
-    content_encoding = response.headers.get('Content-Encoding', '')
-    
-    try:
-        if 'gzip' in content_encoding:
-            # 如果是gzip压缩，解压
-            compressed_stream = io.BytesIO(response.content)
-            with gzip.GzipFile(fileobj=compressed_stream) as f:
-                decoded_content = f.read().decode('utf-8')
-        else:
-            # 否则直接解码
-            decoded_content = response.content.decode('utf-8')
-        
-        return decoded_content
-    except Exception as e:
-        # 如果解码失败，返回原始内容的前200字节的十六进制表示
-        return f"解码失败: {str(e)} | 原始数据: {response.content[:200].hex()}"
 
 def format_days(days_str):
     days = float(days_str)
@@ -85,31 +62,42 @@ def check_account_status(email, cookie, proxy):
     url = "https://glados.cloud/api/user/status"
     headers = generate_headers(cookie)
     try:
-        print(f"检查状态 - {email}: 发送请求到 {url}")
-        print(f"Cookie 长度: {len(cookie)}")
-        
         response = requests.get(url, headers=headers, proxies=proxy if proxy else None, timeout=20)
         print(f"状态响应状态码: {response.status_code}")
-        print(f"状态响应头: {dict(response.headers)}")
+        
+        # 直接使用 response.text 而不是尝试解码
+        response_text = response.text
+        
+        print(f"状态响应内容: {response_text[:200]}")
         
         response.raise_for_status()
         
-        # 解码响应内容
-        decoded_content = decode_response_content(response)
-        print(f"解码后的响应内容: {decoded_content[:500]}")
-        
         # 尝试解析JSON
-        try:
-            data = json.loads(decoded_content)
-            left_days = format_days(data['data']['leftDays'])
-            return f"<b>{email}</b>: 剩余 {left_days} 天 🗓️"
-        except json.JSONDecodeError as e:
-            return f"<b>{email}</b>: JSON解析失败 - {str(e)} | 内容: {decoded_content[:200]} ❌"
+        data = json.loads(response_text)
+        
+        # 根据你提供的十六进制数据，数据结构可能是不同的
+        # 7b22636f6465223a302c2264617461223a7b...
+        # 对应: {"code":0,"data":{"code":"xxx","domain":"xxx.xxx.xxx","hashed":"xxxxxx","pass":...
+        
+        # 尝试多种可能的数据结构
+        if 'data' in data:
+            if 'leftDays' in data['data']:
+                left_days = format_days(data['data']['leftDays'])
+                return f"<b>{email}</b>: 剩余 {left_days} 天 🗓️"
+            else:
+                # 可能是其他格式
+                return f"<b>{email}</b>: 状态查询成功，但未找到剩余天数信息"
+        elif 'code' in data and data['code'] == 0:
+            return f"<b>{email}</b>: 状态查询成功，但数据结构未知"
+        else:
+            return f"<b>{email}</b>: 状态查询返回异常: {response_text[:100]}"
             
+    except json.JSONDecodeError as e:
+        return f"<b>{email}</b>: JSON解析失败 - {str(e)} | 内容: {response_text[:100] if 'response_text' in locals() else '无响应'} ❌"
     except requests.RequestException as e:
         return f"<b>{email}</b>: 获取状态失败 - {str(e)} ❌"
-    except (KeyError, ValueError) as e:
-        return f"<b>{email}</b>: 解析响应失败 - {str(e)} ❌"
+    except Exception as e:
+        return f"<b>{email}</b>: 未知错误 - {str(e)} ❌"
 
 def sign(email, cookie, proxy):
     url = "https://glados.cloud/api/user/checkin"
@@ -117,32 +105,40 @@ def sign(email, cookie, proxy):
     data = {"token": "glados.cloud"}
     
     try:
-        print(f"签到 - {email}: 发送请求到 {url}")
-        print(f"请求数据: {data}")
-        print(f"Cookie 长度: {len(cookie)}")
-        
         response = requests.post(url, headers=headers, json=data, proxies=proxy if proxy else None, timeout=20)
         print(f"签到响应状态码: {response.status_code}")
-        print(f"签到响应头: {dict(response.headers)}")
+        
+        # 直接使用 response.text
+        response_text = response.text
+        print(f"签到响应内容: {response_text[:200]}")
         
         response.raise_for_status()
         
-        # 解码响应内容
-        decoded_content = decode_response_content(response)
-        print(f"解码后的响应内容: {decoded_content[:500]}")
-        
         # 尝试解析 JSON
-        try:
-            response_data = json.loads(decoded_content)
-            raw_message = response_data.get("message", "")
-            translated_message = translate_message(raw_message)
-        except json.JSONDecodeError:
-            # 如果不是 JSON，检查是否是 HTML 页面
-            if "<html" in decoded_content.lower() or "<!doctype" in decoded_content.lower():
-                translated_message = "响应是HTML页面，可能是Cookie过期或需要登录"
+        response_data = json.loads(response_text)
+        raw_message = response_data.get("message", "")
+        
+        # 从你提供的十六进制数据来看，它对应的是:
+        # 7b22636f6465223a312c22706f696e7473223a302c226d6573736167652...
+        # {"code":1,"points":0,"message":...
+        # 这意味着 code=1 可能是错误
+        
+        if response_data.get("code") == 1:
+            # 根据 glados-check-sign.yml 的经验，可能需要检查不同的响应格式
+            if "message" in response_data:
+                translated_message = translate_message(response_data["message"])
             else:
-                translated_message = f"响应不是有效的JSON: {decoded_content[:100]}"
+                translated_message = f"签到失败，code: {response_data.get('code')}"
+        else:
+            # 正常的签到响应
+            translated_message = translate_message(raw_message)
                 
+    except json.JSONDecodeError:
+        # 如果不是 JSON，检查是否是 HTML 页面
+        if "<html" in response_text.lower() or "<!doctype" in response_text.lower():
+            translated_message = "响应是HTML页面，可能是Cookie过期或需要登录"
+        else:
+            translated_message = f"响应不是有效的JSON: {response_text[:100]}"
     except requests.RequestException as e:
         translated_message = f"请求失败: {str(e)}"
     except Exception as e:
