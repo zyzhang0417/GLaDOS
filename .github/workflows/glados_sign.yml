@@ -1,33 +1,53 @@
-#   branches:
-#     - main  # 每次代码推送到 main 分支时也会触发
+name: GLaDOS Sign-in Workflow
 
-  push:
-    branches:
-      - main  # 只在主分支提交时触发
+on:
+  schedule:
+    # 每天一次的定时任务（根据需要调整频率）
+    - cron: "10 16 * * *"  # 0 0 * * * 表示每天午夜执行
+  workflow_dispatch:
+    # 手动触发工作流
+    
+  # push:
+  #   branches:
+  #     - main  # 每次代码推送到 main 分支时也会触发
+
   # push:
   #  branches:
   #    - main  # 只在主分支提交时触发
 
 jobs:
-sign-in:
-runs-on: ubuntu-latest
+  sign-in:
+    runs-on: ubuntu-latest
 
-steps:
-- name: Check out code
-uses: actions/checkout@v2
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
 
-- name: Set up Python
-uses: actions/setup-python@v4
-with:
-python-version: "3.8"  # 你可以选择所需的 Python 版本
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.8"  # 你可以选择所需的 Python 版本
 
-- name: Install dependencies
-run: |
-       python -m pip install --upgrade pip
-       pip install -r requirements.txt  # 安装依赖
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt  # 安装依赖
 
-   - name: Set up environment variables
-run: |
-       echo "TG_BOT_TOKEN=${{ secrets.TG_BOT_TOKEN }}" >> $GITHUB_ENV
-       echo "TG_CHAT_ID=${{ secrets.TG_CHAT_ID }}" >> $GITHUB_ENV
-       echo "HTTP_PROXY=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
+    - name: Set up environment variables
+      run: |
+        echo "TG_BOT_TOKEN=${{ secrets.TG_BOT_TOKEN }}" >> $GITHUB_ENV
+        echo "TG_CHAT_ID=${{ secrets.TG_CHAT_ID }}" >> $GITHUB_ENV
+        echo "HTTP_PROXY=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
+        echo "HTTPS_PROXY=${{ secrets.HTTPS_PROXY }}" >> $GITHUB_ENV
+        echo "GLADOS_EMAIL_1=${{ secrets.GLADOS_EMAIL_1 }}" >> $GITHUB_ENV
+        echo "GLADOS_COOKIE_1=${{ secrets.GLADOS_COOKIE_1 }}" >> $GITHUB_ENV
+        # 添加其他账号信息
+        # echo "GLADOS_EMAIL_2=${{ secrets.GLADOS_EMAIL_2 }}" >> $GITHUB_ENV
+        # echo "GLADOS_COOKIE_2=${{ secrets.GLADOS_COOKIE_2 }}" >> $GITHUB_ENV
+
+    - name: Run GLaDOS sign-in script
+      run: python glados.py  # 运行你的 Python 脚本
+
+    - name: Clean up
+      run: |
+        rm -f glados_sign.py  # 可选：清理临时文件
