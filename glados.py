@@ -78,7 +78,7 @@ def check_account_status(email, cookie, proxy):
         return f"<b>{email}</b>: 解析响应失败 - {str(e)} ❌"
 
 def sign(email, cookie, proxy):
-    url = "https://glados.cloud/api/user/checkin"
+    url = "https://glados.cloud/api/user/points"
     headers = generate_headers(cookie)
     data = {"token": "glados.cloud"}
     try:
