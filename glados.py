@@ -4,6 +4,8 @@ import random
 import os
 import time
 import json
+import gzip
+import io
 from dotenv import load_dotenv
 
 def translate_message(raw_message):
@@ -25,14 +27,35 @@ def generate_headers(cookie):
     ]
     return {
         "Accept": "application/json, text/plain, */*",
-        "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Content-Type": "application/json;charset=UTF-8",
         "Cookie": cookie,
         "Origin": "https://glados.cloud",
         "Referer": "https://glados.cloud/console/checkin",
-        "User-Agent": random.choice(user_agents)
+        "User-Agent": random.choice(user_agents),
+        "Connection": "keep-alive",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache"
     }
+
+def decode_response_content(response):
+    """尝试解码响应内容，处理可能的gzip压缩"""
+    content_encoding = response.headers.get('Content-Encoding', '')
+    
+    try:
+        if 'gzip' in content_encoding:
+            # 如果是gzip压缩，解压
+            compressed_stream = io.BytesIO(response.content)
+            with gzip.GzipFile(fileobj=compressed_stream) as f:
+                decoded_content = f.read().decode('utf-8')
+        else:
+            # 否则直接解码
+            decoded_content = response.content.decode('utf-8')
+        
+        return decoded_content
+    except Exception as e:
+        # 如果解码失败，返回原始内容的前200字节的十六进制表示
+        return f"解码失败: {str(e)} | 原始数据: {response.content[:200].hex()}"
 
 def format_days(days_str):
     days = float(days_str)
@@ -63,20 +86,30 @@ def check_account_status(email, cookie, proxy):
     headers = generate_headers(cookie)
     try:
         print(f"检查状态 - {email}: 发送请求到 {url}")
-        print(f"Cookie 前10位: {cookie[:10]}...")
+        print(f"Cookie 长度: {len(cookie)}")
         
-        response = requests.get(url, headers=headers, proxies=proxy if proxy else None, timeout=15)
+        response = requests.get(url, headers=headers, proxies=proxy if proxy else None, timeout=20)
         print(f"状态响应状态码: {response.status_code}")
-        print(f"状态响应内容前200字符: {response.text[:200]}")
+        print(f"状态响应头: {dict(response.headers)}")
         
         response.raise_for_status()
-        data = response.json()
-        left_days = format_days(data['data']['leftDays'])
-        return f"<b>{email}</b>: 剩余 {left_days} 天 🗓️"
+        
+        # 解码响应内容
+        decoded_content = decode_response_content(response)
+        print(f"解码后的响应内容: {decoded_content[:500]}")
+        
+        # 尝试解析JSON
+        try:
+            data = json.loads(decoded_content)
+            left_days = format_days(data['data']['leftDays'])
+            return f"<b>{email}</b>: 剩余 {left_days} 天 🗓️"
+        except json.JSONDecodeError as e:
+            return f"<b>{email}</b>: JSON解析失败 - {str(e)} | 内容: {decoded_content[:200]} ❌"
+            
     except requests.RequestException as e:
         return f"<b>{email}</b>: 获取状态失败 - {str(e)} ❌"
     except (KeyError, ValueError) as e:
-        return f"<b>{email}</b>: 解析响应失败 - {str(e)} | 响应: {response.text[:100]} ❌"
+        return f"<b>{email}</b>: 解析响应失败 - {str(e)} ❌"
 
 def sign(email, cookie, proxy):
     url = "https://glados.cloud/api/user/checkin"
@@ -86,30 +119,34 @@ def sign(email, cookie, proxy):
     try:
         print(f"签到 - {email}: 发送请求到 {url}")
         print(f"请求数据: {data}")
-        print(f"Cookie 前10位: {cookie[:10]}...")
+        print(f"Cookie 长度: {len(cookie)}")
         
-        response = requests.post(url, headers=headers, json=data, proxies=proxy if proxy else None, timeout=15)
+        response = requests.post(url, headers=headers, json=data, proxies=proxy if proxy else None, timeout=20)
         print(f"签到响应状态码: {response.status_code}")
-        print(f"签到响应内容前200字符: {response.text[:200]}")
+        print(f"签到响应头: {dict(response.headers)}")
         
         response.raise_for_status()
         
+        # 解码响应内容
+        decoded_content = decode_response_content(response)
+        print(f"解码后的响应内容: {decoded_content[:500]}")
+        
         # 尝试解析 JSON
         try:
-            response_data = response.json()
+            response_data = json.loads(decoded_content)
             raw_message = response_data.get("message", "")
             translated_message = translate_message(raw_message)
         except json.JSONDecodeError:
             # 如果不是 JSON，检查是否是 HTML 页面
-            if "<html" in response.text.lower():
+            if "<html" in decoded_content.lower() or "<!doctype" in decoded_content.lower():
                 translated_message = "响应是HTML页面，可能是Cookie过期或需要登录"
             else:
-                translated_message = f"响应不是有效的JSON: {response.text[:100]}"
+                translated_message = f"响应不是有效的JSON: {decoded_content[:100]}"
                 
     except requests.RequestException as e:
         translated_message = f"请求失败: {str(e)}"
-    except ValueError:
-        translated_message = f"解析响应失败: {response.text[:100] if 'response' in locals() else '无响应'}"
+    except Exception as e:
+        translated_message = f"其他错误: {str(e)}"
 
     beijing_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     log_message = f"{beijing_time.strftime('%Y-%m-%d %H:%M')} {email}: {translated_message}"
@@ -156,11 +193,15 @@ def multi_account_sign():
         print(f"处理账号: {email}")
         sign_result = sign(email, cookie, proxy)
         sign_messages.append(sign_result)
+        time.sleep(random.randint(3, 7))
         status_result = check_account_status(email, cookie, proxy)
         status_messages.append(status_result)
-        time.sleep(random.randint(5, 15))
+        time.sleep(random.randint(5, 10))
 
-    send_notification(sign_messages, status_messages, bot_token, chat_id)
+    if bot_token and chat_id:
+        send_notification(sign_messages, status_messages, bot_token, chat_id)
+    else:
+        print("未配置 Telegram 通知，跳过发送")
 
 if __name__ == "__main__":
     multi_account_sign()
