@@ -1,31 +1,33 @@
-name: glados签到
-on:
-  schedule:
-  # 0时区
-  - cron: '35 17 * * *'
-  workflow_dispatch:
+#   branches:
+#     - main  # 每次代码推送到 main 分支时也会触发
+
+  push:
+    branches:
+      - main  # 只在主分支提交时触发
+  # push:
+  #  branches:
+  #    - main  # 只在主分支提交时触发
+
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 签到
-        run: |
-          echo "Beijing Time: $(date -d '+8 hours')"
-          checkin='https://glados.cloud/api/user/checkin'
-          points='https://glados.cloud/api/user/points'
-          # 调用签到接口
-          resData=`curl -sS $checkin -b '${{ secrets.GLADOS_COOKIE_36863 }}' -H 'Content-Type: application/json' -A 'Mozilla/5.0' -d '{"token":"glados.cloud"}'`
-          # echo resData
-          echo $resData |jq -r '.message+". balance is "+(.list[0].balance| tonumber|round | tostring) +" points!"'
-          sleep 1
-          resData=`curl -sS $checkin -b '${{ secrets.GLADOS_COOKIE_XL7 }}' -H 'Content-Type: application/json' -A 'Mozilla/5.0' -d '{"token":"glados.cloud"}'`
-          echo $resData |jq -r '.message+". balance is "+(.list[0].balance| tonumber|round | tostring) +" points!"'
-          # 间隔1S
-          sleep 1
-          resData=`curl -sS $checkin -b '${{ secrets.GLADOS_COOKIE_775151 }}' -H 'Content-Type: application/json' -A 'Mozilla/5.0' -d '{"token":"glados.cloud"}'`
-          echo $resData |jq -r '.message+". balance is "+(.list[0].balance| tonumber|round | tostring) +" points!"'
-          # 间隔1S
-          sleep 1
-          resData=`curl -sS $checkin -b '${{ secrets.GLADOS_COOKIE_ZXL7_FOX }}' -H 'Content-Type: application/json' -A 'Mozilla/5.0' -d '{"token":"glados.cloud"}'`
-          echo $resData |jq -r '.message+". balance is "+(.list[0].balance| tonumber|round | tostring) +" points!"'
-          
+sign-in:
+runs-on: ubuntu-latest
+
+steps:
+- name: Check out code
+uses: actions/checkout@v2
+
+- name: Set up Python
+uses: actions/setup-python@v4
+with:
+python-version: "3.8"  # 你可以选择所需的 Python 版本
+
+- name: Install dependencies
+run: |
+       python -m pip install --upgrade pip
+       pip install -r requirements.txt  # 安装依赖
+
+   - name: Set up environment variables
+run: |
+       echo "TG_BOT_TOKEN=${{ secrets.TG_BOT_TOKEN }}" >> $GITHUB_ENV
+       echo "TG_CHAT_ID=${{ secrets.TG_CHAT_ID }}" >> $GITHUB_ENV
+       echo "HTTP_PROXY=${{ secrets.HTTP_PROXY }}" >> $GITHUB_ENV
