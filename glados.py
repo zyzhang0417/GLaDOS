@@ -3,6 +3,7 @@ import datetime
 import random
 import os
 import time
+import json
 from dotenv import load_dotenv
 
 def translate_message(raw_message):
@@ -29,7 +30,7 @@ def generate_headers(cookie):
         "Content-Type": "application/json;charset=UTF-8",
         "Cookie": cookie,
         "Origin": "https://glados.cloud",
-        "Referer": "https://glados.cloud/",
+        "Referer": "https://glados.cloud/console/checkin",
         "User-Agent": random.choice(user_agents)
     }
 
@@ -61,7 +62,13 @@ def check_account_status(email, cookie, proxy):
     url = "https://glados.cloud/api/user/status"
     headers = generate_headers(cookie)
     try:
-        response = requests.get(url, headers=headers, proxies=proxy, timeout=10)
+        print(f"检查状态 - {email}: 发送请求到 {url}")
+        print(f"Cookie 前10位: {cookie[:10]}...")
+        
+        response = requests.get(url, headers=headers, proxies=proxy if proxy else None, timeout=15)
+        print(f"状态响应状态码: {response.status_code}")
+        print(f"状态响应内容前200字符: {response.text[:200]}")
+        
         response.raise_for_status()
         data = response.json()
         left_days = format_days(data['data']['leftDays'])
@@ -69,23 +76,41 @@ def check_account_status(email, cookie, proxy):
     except requests.RequestException as e:
         return f"<b>{email}</b>: 获取状态失败 - {str(e)} ❌"
     except (KeyError, ValueError) as e:
-        return f"<b>{email}</b>: 解析响应失败 - {str(e)} ❌"
+        return f"<b>{email}</b>: 解析响应失败 - {str(e)} | 响应: {response.text[:100]} ❌"
 
 def sign(email, cookie, proxy):
     url = "https://glados.cloud/api/user/checkin"
     headers = generate_headers(cookie)
     data = {"token": "glados.cloud"}
-    try:
-        response = requests.post(url, headers=headers, json=data, proxies=proxy, timeout=10)
-        response.raise_for_status()
-        response_data = response.json()
-        raw_message = response_data.get("message", "")
-        translated_message = translate_message(raw_message)
-    except requests.RequestException as e:
-        translated_message = f"请求失败: {e}"
-    except ValueError:
-        translated_message = f"解析响应失败: {response.text}"
     
+    try:
+        print(f"签到 - {email}: 发送请求到 {url}")
+        print(f"请求数据: {data}")
+        print(f"Cookie 前10位: {cookie[:10]}...")
+        
+        response = requests.post(url, headers=headers, json=data, proxies=proxy if proxy else None, timeout=15)
+        print(f"签到响应状态码: {response.status_code}")
+        print(f"签到响应内容前200字符: {response.text[:200]}")
+        
+        response.raise_for_status()
+        
+        # 尝试解析 JSON
+        try:
+            response_data = response.json()
+            raw_message = response_data.get("message", "")
+            translated_message = translate_message(raw_message)
+        except json.JSONDecodeError:
+            # 如果不是 JSON，检查是否是 HTML 页面
+            if "<html" in response.text.lower():
+                translated_message = "响应是HTML页面，可能是Cookie过期或需要登录"
+            else:
+                translated_message = f"响应不是有效的JSON: {response.text[:100]}"
+                
+    except requests.RequestException as e:
+        translated_message = f"请求失败: {str(e)}"
+    except ValueError:
+        translated_message = f"解析响应失败: {response.text[:100] if 'response' in locals() else '无响应'}"
+
     beijing_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     log_message = f"{beijing_time.strftime('%Y-%m-%d %H:%M')} {email}: {translated_message}"
     print(log_message)
@@ -95,10 +120,19 @@ def multi_account_sign():
     load_dotenv()
     bot_token = os.getenv("TG_BOT_TOKEN")
     chat_id = os.getenv("TG_CHAT_ID")
-    proxy = {
-        "http": os.getenv("HTTP_PROXY"),
-        "https": os.getenv("HTTPS_PROXY")
-    }
+    
+    # 获取代理配置（可选）
+    http_proxy = os.getenv("HTTP_PROXY")
+    https_proxy = os.getenv("HTTPS_PROXY")
+    proxy = None
+    if http_proxy and https_proxy:
+        proxy = {
+            "http": http_proxy,
+            "https": https_proxy
+        }
+        print(f"使用代理: {proxy}")
+    else:
+        print("未配置代理，直接连接")
 
     accounts = []
     i = 1
@@ -108,6 +142,7 @@ def multi_account_sign():
         if not email or not cookie:
             break
         accounts.append((email, cookie))
+        print(f"找到账号 {i}: {email}")
         i += 1
 
     if not accounts:
@@ -117,6 +152,8 @@ def multi_account_sign():
     sign_messages = []
     status_messages = []
     for email, cookie in accounts:
+        print(f"\n{'='*50}")
+        print(f"处理账号: {email}")
         sign_result = sign(email, cookie, proxy)
         sign_messages.append(sign_result)
         status_result = check_account_status(email, cookie, proxy)
