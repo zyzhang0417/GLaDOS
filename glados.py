@@ -26,16 +26,10 @@ def generate_headers(cookie):
         "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Authorization": "9876543210987654321098765432109-1234-567",
         "Content-Type": "application/json;charset=UTF-8",
         "Cookie": cookie,
-        "Origin": "https://.cloud",
-        "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
+        "Origin": "https://glados.cloud",
+        "Referer": "https://glados.cloud/",
         "User-Agent": random.choice(user_agents)
     }
 
@@ -47,8 +41,8 @@ def format_days(days_str):
 
 def send_notification(sign_messages, status_messages, bot_token, chat_id):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    sign_text = "🔔  签到结果:\n" + "\n".join(sign_messages)
-    status_text = "\n⏳  账号状态:\n" + "\n".join(status_messages)
+    sign_text = "🔔 GLaDOS 签到结果:\n" + "\n".join(sign_messages)
+    status_text = "\n⏳ GLaDOS 账号状态:\n" + "\n".join(status_messages)
     beijing_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     current_time = beijing_time.strftime("%Y-%m-%d %H:%M")
     text = f"🕒 当前时间: {current_time}\n\n{sign_text}\n{status_text}\n\n✅ 签到任务完成"
@@ -78,7 +72,7 @@ def check_account_status(email, cookie, proxy):
         return f"<b>{email}</b>: 解析响应失败 - {str(e)} ❌"
 
 def sign(email, cookie, proxy):
-    url = "https://glados.cloud/api/user/points"
+    url = "https://glados.cloud/api/user/checkin"
     headers = generate_headers(cookie)
     data = {"token": "glados.cloud"}
     try:
