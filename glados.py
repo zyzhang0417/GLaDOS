@@ -26,16 +26,10 @@ def generate_headers(cookie):
         "Accept": "application/json, text/plain, */*",
         "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        "Content-Type": "application/json;charset=UTF-8",
+        "Content-Type": "application/json",
         "Cookie": cookie,
         "Origin": "https://glados.cloud",
-        "Referer": "https://glados.cloud/",
-        "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-origin",
+        "Referer": "https://glados.cloud/console/checkin",
         "User-Agent": random.choice(user_agents)
     }
 
@@ -46,6 +40,10 @@ def format_days(days_str):
     return f"{days:.8f}".rstrip('0').rstrip('.')
 
 def send_notification(sign_messages, status_messages, bot_token, chat_id):
+    if not bot_token or not chat_id:
+        print("Telegram 配置不完整，跳过通知")
+        return
+    
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     sign_text = "🔔 GLaDOS 签到结果:\n" + "\n".join(sign_messages)
     status_text = "\n⏳ GLaDOS 账号状态:\n" + "\n".join(status_messages)
@@ -60,6 +58,7 @@ def send_notification(sign_messages, status_messages, bot_token, chat_id):
     try:
         response = requests.post(url, data=data)
         response.raise_for_status()
+        print("Telegram 通知发送成功")
     except requests.RequestException as e:
         print(f"发送 Telegram 消息失败: {e}")
 
@@ -67,7 +66,13 @@ def check_account_status(email, cookie, proxy):
     url = "https://glados.cloud/api/user/status"
     headers = generate_headers(cookie)
     try:
-        response = requests.get(url, headers=headers, proxies=proxy, timeout=10)
+        # 如果代理配置为空，则不使用代理
+        if proxy and proxy.get("http"):
+            response = requests.get(url, headers=headers, proxies=proxy, timeout=10)
+        else:
+            response = requests.get(url, headers=headers, timeout=10)
+        
+        print(f"Status API 响应码: {response.status_code}")
         response.raise_for_status()
         data = response.json()
         left_days = format_days(data['data']['leftDays'])
@@ -75,22 +80,38 @@ def check_account_status(email, cookie, proxy):
     except requests.RequestException as e:
         return f"<b>{email}</b>: 获取状态失败 - {str(e)} ❌"
     except (KeyError, ValueError) as e:
+        print(f"Status API 原始响应: {response.text[:200]}")
         return f"<b>{email}</b>: 解析响应失败 - {str(e)} ❌"
 
 def sign(email, cookie, proxy):
     url = "https://glados.cloud/api/user/checkin"
     headers = generate_headers(cookie)
     data = {"token": "glados.cloud"}
+    
     try:
-        response = requests.post(url, headers=headers, json=data, proxies=proxy, timeout=10)
+        # 如果代理配置为空，则不使用代理
+        if proxy and proxy.get("http"):
+            response = requests.post(url, headers=headers, json=data, proxies=proxy, timeout=10)
+        else:
+            response = requests.post(url, headers=headers, json=data, timeout=10)
+        
+        print(f"Checkin API 响应码: {response.status_code}")
+        print(f"Checkin API 原始响应: {response.text[:500]}")
+        
         response.raise_for_status()
-        response_data = response.json()
-        raw_message = response_data.get("message", "")
-        translated_message = translate_message(raw_message)
+        
+        # 尝试解析 JSON
+        try:
+            response_data = response.json()
+            raw_message = response_data.get("message", "")
+            translated_message = translate_message(raw_message)
+        except ValueError as e:
+            print(f"JSON 解析失败，原始响应: {response.text}")
+            translated_message = f"解析响应失败 ❌"
+            
     except requests.RequestException as e:
-        translated_message = f"请求失败: {e}"
-    except ValueError:
-        translated_message = f"解析响应失败: {response.text}"
+        print(f"请求异常: {str(e)}")
+        translated_message = f"请求失败: {e} ❌"
     
     beijing_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     log_message = f"{beijing_time.strftime('%Y-%m-%d %H:%M')} {email}: {translated_message}"
@@ -101,10 +122,19 @@ def multi_account_sign():
     load_dotenv()
     bot_token = os.getenv("TG_BOT_TOKEN")
     chat_id = os.getenv("TG_CHAT_ID")
-    proxy = {
-        "http": os.getenv("HTTP_PROXY"),
-        "https": os.getenv("HTTPS_PROXY")
-    }
+    
+    # 处理代理配置
+    http_proxy = os.getenv("HTTP_PROXY")
+    https_proxy = os.getenv("HTTPS_PROXY")
+    proxy = None
+    if http_proxy or https_proxy:
+        proxy = {
+            "http": http_proxy,
+            "https": https_proxy
+        }
+        print(f"使用代理: {proxy}")
+    else:
+        print("未配置代理")
 
     accounts = []
     i = 1
@@ -114,21 +144,33 @@ def multi_account_sign():
         if not email or not cookie:
             break
         accounts.append((email, cookie))
+        print(f"找到账号 {i}: {email}")
         i += 1
 
     if not accounts:
-        print("未找到账号信息，请检查 .env 文件")
+        print("未找到账号信息，请检查环境变量")
         return
 
+    print(f"\n开始处理 {len(accounts)} 个账号...\n")
+    
     sign_messages = []
     status_messages = []
-    for email, cookie in accounts:
+    for idx, (email, cookie) in enumerate(accounts, 1):
+        print(f"--- 处理账号 {idx}/{len(accounts)}: {email} ---")
         sign_result = sign(email, cookie, proxy)
         sign_messages.append(sign_result)
+        
+        time.sleep(2)  # 签到后等待2秒再查询状态
+        
         status_result = check_account_status(email, cookie, proxy)
         status_messages.append(status_result)
-        time.sleep(random.randint(5, 15))
+        
+        if idx < len(accounts):
+            wait_time = random.randint(5, 15)
+            print(f"等待 {wait_time} 秒后处理下一个账号...\n")
+            time.sleep(wait_time)
 
+    print("\n所有账号处理完成，准备发送通知...")
     send_notification(sign_messages, status_messages, bot_token, chat_id)
 
 if __name__ == "__main__":
