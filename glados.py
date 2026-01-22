@@ -3,7 +3,6 @@ import datetime
 import random
 import os
 import time
-import json
 from dotenv import load_dotenv
 
 def translate_message(raw_message):
@@ -25,13 +24,19 @@ def generate_headers(cookie):
     ]
     return {
         "Accept": "application/json, text/plain, */*",
+        "Accept-Encoding": "gzip, deflate, br",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         "Content-Type": "application/json;charset=UTF-8",
         "Cookie": cookie,
         "Origin": "https://glados.cloud",
-        "Referer": "https://glados.cloud/console/checkin",
-        "User-Agent": random.choice(user_agents),
-        "Connection": "keep-alive"
+        "Referer": "https://glados.cloud/",
+        "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+        "User-Agent": random.choice(user_agents)
     }
 
 def format_days(days_str):
@@ -62,88 +67,31 @@ def check_account_status(email, cookie, proxy):
     url = "https://glados.cloud/api/user/status"
     headers = generate_headers(cookie)
     try:
-        response = requests.get(url, headers=headers, proxies=proxy if proxy else None, timeout=20)
-        print(f"状态响应状态码: {response.status_code}")
-        
-        # 直接使用 response.text 而不是尝试解码
-        response_text = response.text
-        
-        print(f"状态响应内容: {response_text[:200]}")
-        
+        response = requests.get(url, headers=headers, proxies=proxy, timeout=10)
         response.raise_for_status()
-        
-        # 尝试解析JSON
-        data = json.loads(response_text)
-        
-        # 根据你提供的十六进制数据，数据结构可能是不同的
-        # 7b22636f6465223a302c2264617461223a7b...
-        # 对应: {"code":0,"data":{"code":"xxx","domain":"xxx.xxx.xxx","hashed":"xxxxxx","pass":...
-        
-        # 尝试多种可能的数据结构
-        if 'data' in data:
-            if 'leftDays' in data['data']:
-                left_days = format_days(data['data']['leftDays'])
-                return f"<b>{email}</b>: 剩余 {left_days} 天 🗓️"
-            else:
-                # 可能是其他格式
-                return f"<b>{email}</b>: 状态查询成功，但未找到剩余天数信息"
-        elif 'code' in data and data['code'] == 0:
-            return f"<b>{email}</b>: 状态查询成功，但数据结构未知"
-        else:
-            return f"<b>{email}</b>: 状态查询返回异常: {response_text[:100]}"
-            
-    except json.JSONDecodeError as e:
-        return f"<b>{email}</b>: JSON解析失败 - {str(e)} | 内容: {response_text[:100] if 'response_text' in locals() else '无响应'} ❌"
+        data = response.json()
+        left_days = format_days(data['data']['leftDays'])
+        return f"<b>{email}</b>: 剩余 {left_days} 天 🗓️"
     except requests.RequestException as e:
         return f"<b>{email}</b>: 获取状态失败 - {str(e)} ❌"
-    except Exception as e:
-        return f"<b>{email}</b>: 未知错误 - {str(e)} ❌"
+    except (KeyError, ValueError) as e:
+        return f"<b>{email}</b>: 解析响应失败 - {str(e)} ❌"
 
 def sign(email, cookie, proxy):
     url = "https://glados.cloud/api/user/checkin"
     headers = generate_headers(cookie)
     data = {"token": "glados.cloud"}
-    
     try:
-        response = requests.post(url, headers=headers, json=data, proxies=proxy if proxy else None, timeout=20)
-        print(f"签到响应状态码: {response.status_code}")
-        
-        # 直接使用 response.text
-        response_text = response.text
-        print(f"签到响应内容: {response_text[:200]}")
-        
+        response = requests.post(url, headers=headers, json=data, proxies=proxy, timeout=10)
         response.raise_for_status()
-        
-        # 尝试解析 JSON
-        response_data = json.loads(response_text)
+        response_data = response.json()
         raw_message = response_data.get("message", "")
-        
-        # 从你提供的十六进制数据来看，它对应的是:
-        # 7b22636f6465223a312c22706f696e7473223a302c226d6573736167652...
-        # {"code":1,"points":0,"message":...
-        # 这意味着 code=1 可能是错误
-        
-        if response_data.get("code") == 1:
-            # 根据 glados-check-sign.yml 的经验，可能需要检查不同的响应格式
-            if "message" in response_data:
-                translated_message = translate_message(response_data["message"])
-            else:
-                translated_message = f"签到失败，code: {response_data.get('code')}"
-        else:
-            # 正常的签到响应
-            translated_message = translate_message(raw_message)
-                
-    except json.JSONDecodeError:
-        # 如果不是 JSON，检查是否是 HTML 页面
-        if "<html" in response_text.lower() or "<!doctype" in response_text.lower():
-            translated_message = "响应是HTML页面，可能是Cookie过期或需要登录"
-        else:
-            translated_message = f"响应不是有效的JSON: {response_text[:100]}"
+        translated_message = translate_message(raw_message)
     except requests.RequestException as e:
-        translated_message = f"请求失败: {str(e)}"
-    except Exception as e:
-        translated_message = f"其他错误: {str(e)}"
-
+        translated_message = f"请求失败: {e}"
+    except ValueError:
+        translated_message = f"解析响应失败: {response.text}"
+    
     beijing_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
     log_message = f"{beijing_time.strftime('%Y-%m-%d %H:%M')} {email}: {translated_message}"
     print(log_message)
@@ -153,19 +101,10 @@ def multi_account_sign():
     load_dotenv()
     bot_token = os.getenv("TG_BOT_TOKEN")
     chat_id = os.getenv("TG_CHAT_ID")
-    
-    # 获取代理配置（可选）
-    http_proxy = os.getenv("HTTP_PROXY")
-    https_proxy = os.getenv("HTTPS_PROXY")
-    proxy = None
-    if http_proxy and https_proxy:
-        proxy = {
-            "http": http_proxy,
-            "https": https_proxy
-        }
-        print(f"使用代理: {proxy}")
-    else:
-        print("未配置代理，直接连接")
+    proxy = {
+        "http": os.getenv("HTTP_PROXY"),
+        "https": os.getenv("HTTPS_PROXY")
+    }
 
     accounts = []
     i = 1
@@ -175,7 +114,6 @@ def multi_account_sign():
         if not email or not cookie:
             break
         accounts.append((email, cookie))
-        print(f"找到账号 {i}: {email}")
         i += 1
 
     if not accounts:
@@ -185,19 +123,13 @@ def multi_account_sign():
     sign_messages = []
     status_messages = []
     for email, cookie in accounts:
-        print(f"\n{'='*50}")
-        print(f"处理账号: {email}")
         sign_result = sign(email, cookie, proxy)
         sign_messages.append(sign_result)
-        time.sleep(random.randint(3, 7))
         status_result = check_account_status(email, cookie, proxy)
         status_messages.append(status_result)
-        time.sleep(random.randint(5, 10))
+        time.sleep(random.randint(5, 15))
 
-    if bot_token and chat_id:
-        send_notification(sign_messages, status_messages, bot_token, chat_id)
-    else:
-        print("未配置 Telegram 通知，跳过发送")
+    send_notification(sign_messages, status_messages, bot_token, chat_id)
 
 if __name__ == "__main__":
     multi_account_sign()
