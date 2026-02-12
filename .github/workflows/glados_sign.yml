@@ -43,6 +43,8 @@ jobs:
         echo "GLADOS_COOKIE_1=${{ secrets.GLADOS_COOKIE_1 }}" >> $GITHUB_ENV
         echo "GLADOS_EMAIL_2=${{ secrets.GLADOS_EMAIL_2 }}" >> $GITHUB_ENV
         echo "GLADOS_COOKIE_2=${{ secrets.GLADOS_COOKIE_2 }}" >> $GITHUB_ENV
+        echo "GLADOS_EMAIL_3=${{ secrets.GLADOS_EMAIL_3 }}" >> $GITHUB_ENV
+        echo "GLADOS_COOKIE_3=${{ secrets.GLADOS_COOKIE_3 }}" >> $GITHUB_ENV
 
     - name: Run GLaDOS sign-in script
       run: python glados.py  # 运行你的 Python 脚本
