@@ -41,9 +41,8 @@ jobs:
         echo "HTTPS_PROXY=${{ secrets.HTTPS_PROXY }}" >> $GITHUB_ENV
         echo "GLADOS_EMAIL_1=${{ secrets.GLADOS_EMAIL_1 }}" >> $GITHUB_ENV
         echo "GLADOS_COOKIE_1=${{ secrets.GLADOS_COOKIE_1 }}" >> $GITHUB_ENV
-        # 添加其他账号信息
-        # echo "GLADOS_EMAIL_2=${{ secrets.GLADOS_EMAIL_2 }}" >> $GITHUB_ENV
-        # echo "GLADOS_COOKIE_2=${{ secrets.GLADOS_COOKIE_2 }}" >> $GITHUB_ENV
+        echo "GLADOS_EMAIL_2=${{ secrets.GLADOS_EMAIL_2 }}" >> $GITHUB_ENV
+        echo "GLADOS_COOKIE_2=${{ secrets.GLADOS_COOKIE_2 }}" >> $GITHUB_ENV
 
     - name: Run GLaDOS sign-in script
       run: python glados.py  # 运行你的 Python 脚本
