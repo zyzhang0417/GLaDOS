@@ -1,172 +1,131 @@
-import requests
-import datetime
-import random
 import os
-import time
-from dotenv import load_dotenv
+import requests
+import json
+from datetime import datetime, timedelta, timezone
 
-def translate_message(raw_message):
-    if raw_message == "Please Try Tomorrow":
-        return "签到失败，请明天再试 🤖"
-    elif "Checkin! Got" in raw_message:
-        points = raw_message.split("Got ")[1].split(" Points")[0]
-        return f"签到成功，获得{points}积分 🎉"
-    elif raw_message == "Checkin Repeats! Please Try Tomorrow":
-        return "重复签到，请明天再试 🔁"
-    else:
-        return f"未知的签到结果: {raw_message} ❓"
+# 从环境变量中读取配置信息
+cookie = os.environ.get("GLADOS_COOKIE")
+tg_token = os.environ.get("TG_BOT_TOKEN")
+tg_chat_id = os.environ.get("TG_CHAT_ID")
 
-def generate_headers(cookie):
-    user_agents = [
-        "Mozilla/5.0",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
-    ]
-    return {
-        "Content-Type": "application/json",
-        "Cookie": cookie,
-        "User-Agent": random.choice(user_agents)
-    }
-
-def format_days(days_str):
-    days = float(days_str)
-    if days.is_integer():
-        return str(int(days))
-    return f"{days:.8f}".rstrip('0').rstrip('.')
-
-def send_notification(sign_messages, status_messages, bot_token, chat_id):
-    if not bot_token or not chat_id:
-        print("Telegram 配置不完整，跳过通知")
+def send_tg_message(text):
+    """发送 Telegram 消息通知"""
+    if not tg_token or not tg_chat_id:
+        print("未配置 Telegram 机器人信息，跳过推送。")
         return
-    
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    sign_text = "🔔 GLaDOS 签到结果:\n" + "\n".join(sign_messages)
-    status_text = "\n⏳ GLaDOS 账号状态:\n" + "\n".join(status_messages)
-    beijing_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-    current_time = beijing_time.strftime("%Y-%m-%d %H:%M")
-    text = f"🕒 当前时间: {current_time}\n\n{sign_text}\n{status_text}\n\n✅ 签到任务完成"
-    data = {
-        "chat_id": chat_id,
+    url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+    payload = {
+        "chat_id": tg_chat_id,
         "text": text,
         "parse_mode": "HTML"
     }
     try:
-        response = requests.post(url, data=data)
+        response = requests.post(url, json=payload, timeout=10)
         response.raise_for_status()
-        print("Telegram 通知发送成功")
-    except requests.RequestException as e:
-        print(f"发送 Telegram 消息失败: {e}")
+    except Exception as e:
+        print(f"发送 Telegram 通知失败: {e}")
 
-def check_account_status(email, cookie, proxy):
-    url = "https://glados.cloud/api/user/status"
-    headers = generate_headers(cookie)
-    try:
-        # 如果代理配置为空，则不使用代理
-        if proxy and proxy.get("http"):
-            response = requests.get(url, headers=headers, proxies=proxy, timeout=10)
-        else:
-            response = requests.get(url, headers=headers, timeout=10)
-        
-        print(f"Status API 响应码: {response.status_code}")
-        response.raise_for_status()
-        data = response.json()
-        left_days = format_days(data['data']['leftDays'])
-        return f"<b>{email}</b>: 剩余 {left_days} 天 🗓️"
-    except requests.RequestException as e:
-        return f"<b>{email}</b>: 获取状态失败 - {str(e)} ❌"
-    except (KeyError, ValueError) as e:
-        print(f"Status API 原始响应: {response.text[:200]}")
-        return f"<b>{email}</b>: 解析响应失败 - {str(e)} ❌"
-
-def sign(email, cookie, proxy):
-    url = "https://glados.cloud/api/user/checkin"
-    headers = generate_headers(cookie)
-    data = {"token": "glados.cloud"}
+def translate_message(code, msg):
+    """将 GLaDOS 返回的状态码与提示翻译为中文"""
+    msg_str = str(msg).lower()
     
-    try:
-        # 如果代理配置为空，则不使用代理
-        if proxy and proxy.get("http"):
-            response = requests.post(url, headers=headers, json=data, proxies=proxy, timeout=10)
-        else:
-            response = requests.post(url, headers=headers, json=data, timeout=10)
-        
-        print(f"Checkin API 响应码: {response.status_code}")
-        print(f"Checkin API 原始响应: {response.text[:500]}")
-        
-        response.raise_for_status()
-        
-        # 尝试解析 JSON
-        try:
-            response_data = response.json()
-            raw_message = response_data.get("message", "")
-            translated_message = translate_message(raw_message)
-        except ValueError as e:
-            print(f"JSON 解析失败，原始响应: {response.text}")
-            translated_message = f"解析响应失败 ❌"
-            
-    except requests.RequestException as e:
-        print(f"请求异常: {str(e)}")
-        translated_message = f"请求失败: {e} ❌"
-    
-    beijing_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
-    log_message = f"{beijing_time.strftime('%Y-%m-%d %H:%M')} {email}: {translated_message}"
-    print(log_message)
-    return f"<b>{email}</b>: {translated_message}"
-
-def multi_account_sign():
-    load_dotenv()
-    bot_token = os.getenv("TG_BOT_TOKEN")
-    chat_id = os.getenv("TG_CHAT_ID")
-    
-    # 处理代理配置
-    http_proxy = os.getenv("HTTP_PROXY")
-    https_proxy = os.getenv("HTTPS_PROXY")
-    proxy = None
-    if http_proxy or https_proxy:
-        proxy = {
-            "http": http_proxy,
-            "https": https_proxy
-        }
-        print(f"使用代理: {proxy}")
+    # code == 1 或包含 repeat/already 表示重复签到
+    if code == 1 or "repeat" in msg_str or "already" in msg_str:
+        return "今日已完成签到，请明天再来！"
+    elif code == 0:
+        return "今日签到成功，已记录积分！"
+    elif "not logged in" in msg_str or "cookie" in msg_str or "forbidden" in msg_str:
+        return "Cookie 已失效或未登录，请重新获取并更新 Secrets。"
     else:
-        print("未配置代理")
+        return str(msg)
 
-    accounts = []
-    i = 1
-    while True:
-        email = os.getenv(f"GLADOS_EMAIL_{i}")
-        cookie = os.getenv(f"GLADOS_COOKIE_{i}")
-        if not email or not cookie:
-            break
-        accounts.append((email, cookie))
-        print(f"找到账号 {i}: {email}")
-        i += 1
+def get_user_status(domain, headers):
+    """查询当前登录的账号与剩余会员天数，并计算到期日期（仅年月日）"""
+    status_url = f"https://{domain}/api/user/status"
+    email = "未知"
+    expire_info = "未知"
+    
+    try:
+        res = requests.get(status_url, headers=headers, timeout=10)
+        data = res.json()
+        if data.get("code") == 0:
+            user_data = data.get("data", {})
+            email = user_data.get("email", "未知")
+            
+            left_days_raw = user_data.get("leftDays")
+            if left_days_raw is not None:
+                left_days = float(left_days_raw)
+                days_int = int(left_days)
+                
+                # 设置北京时间时区 (UTC+8)
+                tz_utc8 = timezone(timedelta(hours=8))
+                now_beijing = datetime.now(tz_utc8)
+                
+                # 计算到期日期（仅保留年月日 %Y-%m-%d）
+                expire_date = now_beijing + timedelta(days=left_days)
+                expire_str = expire_date.strftime("%Y-%m-%d")
+                
+                expire_info = f"{expire_str} (共 {days_int} 天)"
+    except Exception as e:
+        print(f"获取账号状态失败: {e}")
+        
+    return email, expire_info
 
-    if not accounts:
-        print("未找到账号信息，请检查环境变量")
+def glados_checkin():
+    if not cookie:
+        send_tg_message("❌ <b>GLaDOS 签到失败</b>\n\n原因: 未配置 GLADOS_COOKIE 环境变量")
         return
 
-    print(f"\n开始处理 {len(accounts)} 个账号...\n")
-    
-    sign_messages = []
-    status_messages = []
-    for idx, (email, cookie) in enumerate(accounts, 1):
-        print(f"--- 处理账号 {idx}/{len(accounts)}: {email} ---")
-        sign_result = sign(email, cookie, proxy)
-        sign_messages.append(sign_result)
-        
-        time.sleep(2)  # 签到后等待2秒再查询状态
-        
-        status_result = check_account_status(email, cookie, proxy)
-        status_messages.append(status_result)
-        
-        if idx < len(accounts):
-            wait_time = random.randint(5, 15)
-            print(f"等待 {wait_time} 秒后处理下一个账号...\n")
-            time.sleep(wait_time)
+    domains = ["glados.rocks", "glados.network", "glados.cloud", "glados.one"]
+    checkin_success = False
+    code = -1
+    raw_message = ""
+    email = "未知"
+    expire_info = "未知"
 
-    print("\n所有账号处理完成，准备发送通知...")
-    send_notification(sign_messages, status_messages, bot_token, chat_id)
+    for domain in domains:
+        checkin_url = f"https://{domain}/api/user/checkin"
+        headers = {
+            "Cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Content-Type": "application/json;charset=UTF-8",
+            "Origin": f"https://{domain}",
+            "Referer": f"https://{domain}/console/checkin"
+        }
+        
+        for token_str in ["glados.network", "glados.one", domain]:
+            payload = {"token": token_str}
+            try:
+                response = requests.post(checkin_url, headers=headers, json=payload, timeout=15)
+                data = response.json()
+                
+                if "code" in data:
+                    checkin_success = True
+                    code = data.get("code", -1)
+                    raw_message = data.get("message", "无返回信息")
+                    # 获取登录账号邮箱和到期日期
+                    email, expire_info = get_user_status(domain, headers)
+                    break
+            except Exception:
+                continue
+        if checkin_success:
+            break
+
+    if checkin_success:
+        # 结合状态码 code 和提示文字做中文翻译
+        cn_message = translate_message(code, raw_message)
+        
+        msg_text = (
+            f"✅ <b>GLaDOS 签到通知</b>\n\n"
+            f"<b>登录账号:</b> <code>{email}</code>\n"
+            f"<b>状态信息:</b> {cn_message}\n"
+            f"<b>会员到期时间:</b> <code>{expire_info}</code>"
+        )
+    else:
+        msg_text = "❌ <b>GLaDOS 签到失败</b>\n\n请求超时或 Cookie 已失效，请检查。"
+
+    print(msg_text)
+    send_tg_message(msg_text)
 
 if __name__ == "__main__":
-    multi_account_sign()
+    glados_checkin()
