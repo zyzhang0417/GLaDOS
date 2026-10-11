@@ -3,8 +3,7 @@ import requests
 import json
 from datetime import datetime, timedelta, timezone
 
-# 从环境变量中读取配置信息
-cookie = os.environ.get("GLADOS_COOKIE")
+# 从环境变量中读取 Telegram 配置信息
 tg_token = os.environ.get("TG_BOT_TOKEN")
 tg_chat_id = os.environ.get("TG_CHAT_ID")
 
@@ -29,7 +28,6 @@ def translate_message(code, msg):
     """将 GLaDOS 返回的状态码与提示翻译为中文"""
     msg_str = str(msg).lower()
     
-    # code == 1 或包含 repeat/already 表示重复签到
     if code == 1 or "repeat" in msg_str or "already" in msg_str:
         return "今日已完成签到，请明天再来！"
     elif code == 0:
@@ -61,7 +59,7 @@ def get_user_status(domain, headers):
                 tz_utc8 = timezone(timedelta(hours=8))
                 now_beijing = datetime.now(tz_utc8)
                 
-                # 计算到期日期（仅保留年月日 %Y-%m-%d）
+                # 计算到期日期
                 expire_date = now_beijing + timedelta(days=left_days)
                 expire_str = expire_date.strftime("%Y-%m-%d")
                 
@@ -71,9 +69,9 @@ def get_user_status(domain, headers):
         
     return email, expire_info
 
-def glados_checkin():
+def checkin_single_account(cookie, index_label=""):
+    """单个账号的签到逻辑"""
     if not cookie:
-        send_tg_message("❌ <b>GLaDOS 签到失败</b>\n\n原因: 未配置 GLADOS_COOKIE 环境变量")
         return
 
     domains = ["glados.rocks", "glados.network", "glados.cloud", "glados.one"]
@@ -103,7 +101,6 @@ def glados_checkin():
                     checkin_success = True
                     code = data.get("code", -1)
                     raw_message = data.get("message", "无返回信息")
-                    # 获取登录账号邮箱和到期日期
                     email, expire_info = get_user_status(domain, headers)
                     break
             except Exception:
@@ -112,20 +109,45 @@ def glados_checkin():
             break
 
     if checkin_success:
-        # 结合状态码 code 和提示文字做中文翻译
         cn_message = translate_message(code, raw_message)
-        
         msg_text = (
-            f"✅ <b>GLaDOS 签到通知</b>\n\n"
+            f"✅ <b>GLaDOS 签到通知 {index_label}</b>\n\n"
             f"<b>登录账号:</b> <code>{email}</code>\n"
             f"<b>状态信息:</b> {cn_message}\n"
             f"<b>会员到期时间:</b> <code>{expire_info}</code>"
         )
     else:
-        msg_text = "❌ <b>GLaDOS 签到失败</b>\n\n请求超时或 Cookie 已失效，请检查。"
+        msg_text = f"❌ <b>GLaDOS 签到失败 {index_label}</b>\n\n请求超时或 Cookie 已失效，请检查。"
 
     print(msg_text)
     send_tg_message(msg_text)
 
+def glados_checkin_all():
+    """遍历所有配置的 Cookie 账号进行签到"""
+    cookies_to_check = []
+
+    # 1. 优先尝试读取带编号的多账号环境变量 (GLADOS_COOKIE_1, GLADOS_COOKIE_2 ...)
+    for i in range(1, 10):  # 支持最多 9 个账号，可自行扩展
+        c = os.environ.get(f"GLADOS_COOKIE_{i}")
+        if c:
+            cookies_to_check.append((c, f"[账号 {i}]"))
+
+    # 2. 如果没有找到带编号的，尝试读取旧的单个 GLADOS_COOKIE
+    if not cookies_to_check:
+        single_c = os.environ.get("GLADOS_COOKIE")
+        if single_c:
+            cookies_to_check.append((single_c, ""))
+
+    # 3. 如果依然没有任何 Cookie，报错提示
+    if not cookies_to_check:
+        error_msg = "❌ <b>GLaDOS 签到失败</b>\n\n原因: 未配置任何 GLADOS_COOKIE 或 GLADOS_COOKIE_X 环境变量"
+        print(error_msg)
+        send_tg_message(error_msg)
+        return
+
+    # 4. 逐个执行签到
+    for cookie, label in cookies_to_check:
+        checkin_single_account(cookie, label)
+
 if __name__ == "__main__":
-    glados_checkin()
+    glados_checkin_all()
